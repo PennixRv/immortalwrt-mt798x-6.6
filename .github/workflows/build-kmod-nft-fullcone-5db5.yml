@@ -8,7 +8,7 @@ jobs:
     runs-on: ubuntu-latest
 
     env:
-      TARGET_COMMIT: 5f78e5c4a4ae1231959d4a80f0199da84ad54a48
+      TARGET_COMMIT: 5db5b6621e7dc9a3dfc97d5a523f40c711cabba9
       UPSTREAM_REPO: https://github.com/immortalwrt/immortalwrt.git
       UPSTREAM_REF: openwrt-24.10
 
@@ -45,6 +45,15 @@ jobs:
         working-directory: src
         run: |
           git show --no-patch --format='commit=%H%nsubject=%s%ncommit_date=%cI'
+
+      - name: Override kernel 6.6 details to 6.6.95
+        working-directory: src
+        run: |
+          cat > include/kernel-6.6 <<'EOF'
+          LINUX_VERSION-6.6 = .95
+          LINUX_KERNEL_HASH-6.6.95 = 18640ae9a2c952f8f8868324378df1a9e138ad29e6b93a9c38155764ea67ea85
+          EOF
+          cat include/kernel-6.6
 
       - name: Clone official ImmortalWrt recipe source
         working-directory: src
