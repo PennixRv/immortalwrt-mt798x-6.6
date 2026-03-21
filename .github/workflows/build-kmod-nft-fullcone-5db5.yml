@@ -1,0 +1,127 @@
+name: Build kmod-nft-fullcone for current router firmware
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build-kmod:
+    runs-on: ubuntu-latest
+
+    env:
+      TARGET_COMMIT: 5db5b6621e7dc9a3dfc97d5a523f40c711cabba9
+      UPSTREAM_REPO: https://github.com/immortalwrt/immortalwrt.git
+      UPSTREAM_REF: openwrt-24.10
+
+    steps:
+      - name: Checkout workflow branch
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          path: control
+
+      - name: Checkout target source commit
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ github.repository }}
+          ref: ${{ env.TARGET_COMMIT }}
+          fetch-depth: 1
+          path: src
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            ack antlr3 asciidoc autoconf automake autopoint binutils bison build-essential \
+            bzip2 ccache clang cmake cpio curl device-tree-compiler ecj fastjar flex gawk gettext \
+            gcc-multilib g++-multilib git gnutls-dev gperf haveged help2man intltool lib32gcc-s1 \
+            libc6-dev-i386 libelf-dev libglib2.0-dev libgmp3-dev libltdl-dev libmpc-dev libmpfr-dev \
+            libncurses-dev libpython3-dev libreadline-dev libssl-dev libtool libyaml-dev libz-dev \
+            lld llvm lrzsz mkisofs msmtp ninja-build p7zip p7zip-full patch pkgconf python3 \
+            python3-pip python3-ply python3-docutils python3-pyelftools qemu-utils re2c rsync \
+            scons squashfs-tools subversion swig texinfo uglifyjs upx-ucl unzip wget xmlto xxd \
+            zlib1g-dev zstd file
+
+      - name: Show pinned source revision
+        working-directory: src
+        run: |
+          git show --no-patch --format='commit=%H%nsubject=%s%ncommit_date=%cI'
+
+      - name: Clone official ImmortalWrt recipe source
+        working-directory: src
+        run: |
+          git clone --depth 1 --branch "${UPSTREAM_REF}" "${UPSTREAM_REPO}" ../immortalwrt-upstream
+
+      - name: Import fullconenat-nft package
+        working-directory: src
+        run: |
+          rm -rf package/network/utils/fullconenat-nft
+          cp -a ../immortalwrt-upstream/package/network/utils/fullconenat-nft package/network/utils/
+
+      - name: Adjust Makefile for current router kernel config
+        working-directory: src
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          path = Path("package/network/utils/fullconenat-nft/Makefile")
+          text = path.read_text()
+          text = text.replace("    CONFIG_NF_CONNTRACK_CHAIN_EVENTS=y\n", "")
+          path.write_text(text)
+          print(path.read_text())
+          PY
+
+      - name: Update and install feeds
+        working-directory: src
+        run: |
+          ./scripts/feeds update -a
+          ./scripts/feeds install -a
+
+      - name: Seed minimal .config for Netcore N60 Pro
+        working-directory: src
+        run: |
+          cat > .config <<'EOF'
+          CONFIG_TARGET_mediatek=y
+          CONFIG_TARGET_mediatek_mt7986=y
+          CONFIG_TARGET_mediatek_mt7986_DEVICE_netcore_n60-pro=y
+          CONFIG_PACKAGE_kmod-nft-fullcone=m
+          CONFIG_PACKAGE_kmod-nft-nat=y
+          CONFIG_PACKAGE_firewall4=y
+          CONFIG_PACKAGE_nftables-json=y
+          CONFIG_PACKAGE_libnftnl11=y
+          EOF
+          make defconfig
+          tail -n 50 .config
+
+      - name: Build only fullconenat-nft package
+        working-directory: src
+        run: |
+          make package/network/utils/fullconenat-nft/compile -j"$(nproc)" V=s
+
+      - name: Collect candidate artifacts
+        run: |
+          mkdir -p artifacts/ipk artifacts/ko artifacts/meta
+          find src/bin -type f -name 'kmod-nft-fullcone_*.ipk' -exec cp -v {} artifacts/ipk/ \;
+          find src/build_dir -type f -path '*fullconenat-nft*/src/nft_fullcone.ko' -exec cp -v {} artifacts/ko/ \;
+          cp -v src/.config artifacts/meta/build.config
+          if [ -f control/ci/router/current/proc-config-5db5.config ]; then
+            cp -v control/ci/router/current/proc-config-5db5.config artifacts/meta/
+          fi
+          if [ -f control/ci/router/current/openwrt-release-5db5.txt ]; then
+            cp -v control/ci/router/current/openwrt-release-5db5.txt artifacts/meta/
+          fi
+
+      - name: Inspect candidate module metadata
+        run: |
+          set -e
+          ko="$(find artifacts/ko -type f -name 'nft_fullcone.ko' | head -n 1)"
+          if [ -n "${ko}" ]; then
+            modinfo "${ko}" | tee artifacts/meta/modinfo.txt
+          else
+            echo "nft_fullcone.ko not found" | tee artifacts/meta/modinfo.txt
+            exit 1
+          fi
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: kmod-nft-fullcone-candidate
+          path: artifacts/
