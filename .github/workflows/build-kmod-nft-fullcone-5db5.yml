@@ -80,8 +80,8 @@ jobs:
         run: |
           cat > .config <<'EOF'
           CONFIG_TARGET_mediatek=y
-          CONFIG_TARGET_mediatek_mt7986=y
-          CONFIG_TARGET_mediatek_mt7986_DEVICE_netcore_n60-pro=y
+          CONFIG_TARGET_mediatek_filogic=y
+          CONFIG_TARGET_mediatek_filogic_DEVICE_netcore_n60-pro=y
           CONFIG_PACKAGE_kmod-nft-fullcone=m
           CONFIG_PACKAGE_kmod-nft-nat=y
           CONFIG_PACKAGE_firewall4=y
@@ -89,6 +89,7 @@ jobs:
           CONFIG_PACKAGE_libnftnl11=y
           EOF
           make defconfig
+          grep -q '^CONFIG_TARGET_mediatek_filogic_DEVICE_netcore_n60-pro=y$' .config
           tail -n 50 .config
 
       - name: Prepare toolchain and target kernel tree
