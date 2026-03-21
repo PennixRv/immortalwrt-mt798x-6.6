@@ -8,7 +8,7 @@ jobs:
     runs-on: ubuntu-latest
 
     env:
-      TARGET_COMMIT: 5db5b6621e7dc9a3dfc97d5a523f40c711cabba9
+      TARGET_COMMIT: 5f78e5c4a4ae1231959d4a80f0199da84ad54a48
       UPSTREAM_REPO: https://github.com/immortalwrt/immortalwrt.git
       UPSTREAM_REF: openwrt-24.10
 
