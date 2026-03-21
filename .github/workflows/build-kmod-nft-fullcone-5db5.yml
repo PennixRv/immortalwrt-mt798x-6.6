@@ -91,6 +91,11 @@ jobs:
           make defconfig
           tail -n 50 .config
 
+      - name: Prepare toolchain and target kernel tree
+        working-directory: src
+        run: |
+          make tools/install toolchain/install target/linux/compile -j"$(nproc)" V=s
+
       - name: Build only fullconenat-nft package
         working-directory: src
         run: |
