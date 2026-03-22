@@ -11,6 +11,7 @@ jobs:
       TARGET_COMMIT: 5db5b6621e7dc9a3dfc97d5a523f40c711cabba9
       UPSTREAM_REPO: https://github.com/immortalwrt/immortalwrt.git
       UPSTREAM_REF: openwrt-24.10
+      EXPECTED_KERNEL_ABI: 3ca4b8cb2fcc3a2027e8496143a86cab
 
     steps:
       - name: Checkout workflow branch
@@ -78,19 +79,26 @@ jobs:
           print(path.read_text())
           PY
 
+      - name: Pin feeds from router build snapshot
+        working-directory: src
+        run: |
+          test -f ../control/ci/router/current/build.feeds
+          cp -v ../control/ci/router/current/build.feeds feeds.conf
+          echo "Using pinned feeds:"
+          cat feeds.conf
+
       - name: Update and install feeds
         working-directory: src
         run: |
           ./scripts/feeds update -a
           ./scripts/feeds install -a
 
-      - name: Seed minimal .config for Netcore N60 Pro
+      - name: Seed router build.config and enable candidate package
         working-directory: src
         run: |
-          cat > .config <<'EOF'
-          CONFIG_TARGET_mediatek=y
-          CONFIG_TARGET_mediatek_filogic=y
-          CONFIG_TARGET_mediatek_filogic_DEVICE_netcore_n60-pro=y
+          test -f ../control/ci/router/current/build.config
+          cp -v ../control/ci/router/current/build.config .config
+          cat >> .config <<'EOF'
           CONFIG_PACKAGE_kmod-nft-fullcone=m
           CONFIG_PACKAGE_kmod-nft-nat=y
           CONFIG_PACKAGE_firewall4=y
@@ -99,12 +107,31 @@ jobs:
           EOF
           make defconfig
           grep -q '^CONFIG_TARGET_mediatek_filogic_DEVICE_netcore_n60-pro=y$' .config
-          tail -n 50 .config
+          grep -E '^CONFIG_TARGET_(mediatek|mediatek_filogic|mediatek_filogic_DEVICE_netcore_n60-pro)=|^CONFIG_PACKAGE_kmod-nft-fullcone=|^CONFIG_PACKAGE_kmod-nft-nat=' .config
+
+      - name: Show config drift against router build snapshot
+        working-directory: src
+        run: |
+          ./scripts/diffconfig.sh | tee ../diffconfig.txt
 
       - name: Prepare toolchain and target kernel tree
         working-directory: src
         run: |
           make tools/install toolchain/install target/linux/compile -j"$(nproc)" V=s
+
+      - name: Capture kernel config fingerprint
+        working-directory: src
+        run: |
+          set -euo pipefail
+          linux_dir="$(find build_dir -type d -path '*linux-mediatek_filogic/linux-6.6.95' | head -n 1)"
+          test -n "${linux_dir}"
+          echo "LINUX_DIR=${linux_dir}" | tee ../linux_dir.txt
+          cat "${linux_dir}/.vermagic" | tee ../kernel_vermagic.txt
+          grep '=[ym]' "${linux_dir}/.config.set" | LC_ALL=C sort | md5sum | awk '{print $1}' | tee ../kernel_configset_md5.txt
+          cp -v "${linux_dir}/.config.set" ../kernel.config.set
+          cp -v "${linux_dir}/.config" ../kernel.config
+          cp -v "${linux_dir}/.config.target" ../kernel.config.target
+          cp -v "${linux_dir}/.config.override" ../kernel.config.override
 
       - name: Build only fullconenat-nft package
         working-directory: src
@@ -117,6 +144,18 @@ jobs:
           find src/bin -type f -name 'kmod-nft-fullcone_*.ipk' -exec cp -v {} artifacts/ipk/ \;
           find src/build_dir -type f -path '*fullconenat-nft*/src/nft_fullcone.ko' -exec cp -v {} artifacts/ko/ \;
           cp -v src/.config artifacts/meta/build.config
+          cp -v src/feeds.conf artifacts/meta/feeds.conf
+          cp -v diffconfig.txt artifacts/meta/diffconfig.txt
+          cp -v linux_dir.txt artifacts/meta/linux_dir.txt
+          cp -v kernel_vermagic.txt artifacts/meta/kernel_vermagic.txt
+          cp -v kernel_configset_md5.txt artifacts/meta/kernel_configset_md5.txt
+          cp -v kernel.config.set artifacts/meta/kernel.config.set
+          cp -v kernel.config artifacts/meta/kernel.config
+          cp -v kernel.config.target artifacts/meta/kernel.config.target
+          cp -v kernel.config.override artifacts/meta/kernel.config.override
+          printf '%s\n' "${EXPECTED_KERNEL_ABI}" > artifacts/meta/expected_kernel_abi.txt
+          cp -v control/ci/router/current/build.config artifacts/meta/router.build.config
+          cp -v control/ci/router/current/build.feeds artifacts/meta/router.build.feeds
           if [ -f control/ci/router/current/proc-config-5db5.config ]; then
             cp -v control/ci/router/current/proc-config-5db5.config artifacts/meta/
           fi
@@ -134,6 +173,14 @@ jobs:
             echo "nft_fullcone.ko not found" | tee artifacts/meta/modinfo.txt
             exit 1
           fi
+
+      - name: Inspect candidate ipk control metadata
+        run: |
+          set -euo pipefail
+          ipk="$(find artifacts/ipk -type f -name 'kmod-nft-fullcone_*.ipk' | head -n 1)"
+          test -n "${ipk}"
+          ar p "${ipk}" control.tar.gz | tar -xzO ./control | tee artifacts/meta/ipk-control.txt
+          printf 'expected_kernel_abi=%s\n' "${EXPECTED_KERNEL_ABI}" | tee -a artifacts/meta/ipk-control.txt
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
