@@ -177,9 +177,25 @@ jobs:
       - name: Inspect candidate ipk control metadata
         run: |
           set -euo pipefail
-          ipk="$(find artifacts/ipk -type f -name 'kmod-nft-fullcone_*.ipk' | head -n 1)"
-          test -n "${ipk}"
-          ar p "${ipk}" control.tar.gz | tar -xzO ./control | tee artifacts/meta/ipk-control.txt
+          ipk="$(find artifacts/ipk -type f -name 'kmod-nft-fullcone_*.ipk' | head -n 1 || true)"
+          if [ -z "${ipk}" ]; then
+            echo 'kmod-nft-fullcone ipk not found' | tee artifacts/meta/ipk-control.txt
+          else
+            tmpdir="$(mktemp -d)"
+            trap 'rm -rf "${tmpdir}"' EXIT
+            if ar p "${ipk}" control.tar.gz > "${tmpdir}/control.tar.gz"; then
+              tar -tzf "${tmpdir}/control.tar.gz" | tee artifacts/meta/ipk-control-members.txt || true
+              member="$(tar -tzf "${tmpdir}/control.tar.gz" | awk '/(^|\/)control$/{print; exit}')"
+              if [ -n "${member}" ]; then
+                tar -xzf "${tmpdir}/control.tar.gz" -C "${tmpdir}" "${member}"
+                cat "${tmpdir}/${member}" | tee artifacts/meta/ipk-control.txt
+              else
+                echo 'control member not found in control.tar.gz' | tee artifacts/meta/ipk-control.txt
+              fi
+            else
+              echo 'failed to extract control.tar.gz from ipk' | tee artifacts/meta/ipk-control.txt
+            fi
+          fi
           printf 'expected_kernel_abi=%s\n' "${EXPECTED_KERNEL_ABI}" | tee -a artifacts/meta/ipk-control.txt
 
       - name: Upload artifacts
